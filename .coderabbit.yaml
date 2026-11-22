@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit PR review settings for MediFlow. Docs: https://docs.coderabbit.ai/reference/configuration
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  sequence_diagrams: true
+  poem: false
+  in_progress_fortune: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  path_filters:
+    - "!api/mvnw"
+    - "!api/mvnw.cmd"
+    - "!api/.mvn/**"
+    - "!**/target/**"
+
+  path_instructions:
+    - path: "**"
+      instructions: |
+        MediFlow is a clinic platform (patients, doctors, appointments). It is a learning project
+        using synthetic data, but review it as if it handled real patient data (PHI):
+        - No PHI (names, emails, phone numbers, birth dates, appointment reasons, row values from
+          database errors) in logs, exception messages, URLs or 409/422 error bodies. IDs are fine.
+        - Error responses must stay RFC 9457 ProblemDetail JSON via GlobalExceptionHandler.
+
+    - path: "api/src/main/java/**/controller/**"
+      instructions: |
+        - Controllers take and return record DTOs from the dto package; never expose entities.
+        - Request bodies are validated with @Valid and jakarta.validation constraints.
+        - Every endpoint needs a MockMvc test (JUnit 5). Flag new endpoints without one.
+
+    - path: "api/src/main/java/**/service/**"
+      instructions: |
+        - Business rules and transactions live here. Writes that can violate a database constraint
+          should use saveAndFlush/flush so the violation surfaces inside the service call.
+        - State changes on appointments must load the row with a lock (findByIdForUpdate).
+        - Watch for check-then-act races; invariants that must never break belong in the database.
+
+    - path: "api/src/main/java/**/{entity,dto}/**"
+      instructions: |
+        - Use FHIR-style field names in the API (givenName, familyName, birthDate, start, end) and
+          lowercase FHIR codes for coded values (gender, appointment status).
+        - Entities must match the Flyway schema (Hibernate runs with ddl-auto: validate).
+
+    - path: "api/src/main/resources/db/migration/**"
+      instructions: |
+        - Flyway migrations are immutable once merged: flag any edit to an existing V<n>__ file;
+          changes must go in a new, higher-numbered migration.
+        - Check constraints, indexes and that existing data cannot make the migration fail.
+        - Do not drop or weaken the appointment exclusion constraints (no double booking).
+
+    - path: "api/src/test/**"
+      instructions: |
+        - Integration tests run against PostgreSQL and roll back via @Transactional; tests that
+          commit must clean up after themselves.
+        - Prefer asserting HTTP status and ProblemDetail fields over implementation details.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+
+chat:
+  auto_reply: true
