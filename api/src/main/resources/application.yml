@@ -5,6 +5,10 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/mediflow}
     username: ${DB_USERNAME:mediflow}
     password: ${DB_PASSWORD:mediflow}
+    hikari:
+      data-source-properties:
+        # Keep row values (patient ids, emails, times) out of SQL exception messages and logs.
+        logServerErrorDetail: false
   jpa:
     # Flyway owns the schema; Hibernate only checks that entities match it.
     hibernate:

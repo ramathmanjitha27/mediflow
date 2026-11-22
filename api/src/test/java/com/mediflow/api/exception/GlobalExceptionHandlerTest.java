@@ -1,5 +1,6 @@
 package com.mediflow.api.exception;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -10,6 +11,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -20,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Exercises each handler through a stub controller that throws on demand. */
+@ExtendWith(OutputCaptureExtension.class)
 class GlobalExceptionHandlerTest {
 
     record StubRequest(@NotBlank String name) {
@@ -40,6 +45,42 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/integrity")
         void integrity() {
             throw new DataIntegrityViolationException("FK violation on secret_table");
+        }
+
+        @GetMapping("/overlap")
+        void overlap() {
+            throw new DataIntegrityViolationException("insert failed", new java.sql.SQLException(
+                    "ERROR: conflicting key value violates exclusion constraint \"appointment_doctor_no_overlap\"", "23P01"));
+        }
+
+        @GetMapping("/fk")
+        void foreignKey() {
+            throw new DataIntegrityViolationException("delete failed", new java.sql.SQLException(
+                    "ERROR: update or delete on table \"patient\" violates foreign key constraint "
+                            + "\"appointment_patient_id_fkey\" on table \"appointment\"", "23503"));
+        }
+
+        @GetMapping("/overlap-with-detail")
+        void overlapWithDetail() {
+            java.sql.SQLException sql = new java.sql.SQLException(
+                    "ERROR: conflicting key value violates exclusion constraint \"appointment_patient_no_overlap\"\n"
+                            + "  Detail: Key (patient_id, tstzrange(start_time, end_time, '[)'))=(42, [\"2026-12-01\"))",
+                    "23P01");
+            throw new DataIntegrityViolationException("could not execute statement",
+                    new org.hibernate.exception.ConstraintViolationException("could not execute statement", sql,
+                            "appointment_patient_no_overlap"));
+        }
+
+        @GetMapping("/fk-insert")
+        void foreignKeyOnInsert() {
+            throw new DataIntegrityViolationException("insert failed", new java.sql.SQLException(
+                    "ERROR: insert or update on table \"appointment\" violates foreign key constraint "
+                            + "\"appointment_doctor_id_fkey\"", "23503"));
+        }
+
+        @GetMapping("/unprocessable")
+        void unprocessable() {
+            throw new UnprocessableEntityException("Doctor with id 3 is not active");
         }
 
         @GetMapping("/boom")
@@ -78,6 +119,44 @@ class GlobalExceptionHandlerTest {
         mvc.perform(get("/integrity"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("The request conflicts with existing data"));
+    }
+
+    @Test
+    void exclusionConstraintViolationMapsToOverlapMessage() throws Exception {
+        mvc.perform(get("/overlap"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(ConstraintMessages.DOCTOR_OVERLAP));
+    }
+
+    @Test
+    void foreignKeyViolationMapsToHasAppointmentsMessage() throws Exception {
+        mvc.perform(get("/fk"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("The patient has appointments and cannot be deleted"));
+    }
+
+    @Test
+    void constraintNameComesFromHibernateAndRowValuesAreNeverLogged(CapturedOutput output) throws Exception {
+        mvc.perform(get("/overlap-with-detail"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(ConstraintMessages.PATIENT_OVERLAP));
+
+        assertThat(output).contains("constraint=appointment_patient_no_overlap sqlState=23P01");
+        assertThat(output).doesNotContain("Key (").doesNotContain("42, [");
+    }
+
+    @Test
+    void foreignKeyViolationOnInsertSaysReferenceIsGone() throws Exception {
+        mvc.perform(get("/fk-insert"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("The patient or doctor for this appointment no longer exists"));
+    }
+
+    @Test
+    void unprocessableReturns422Problem() throws Exception {
+        mvc.perform(get("/unprocessable"))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.detail").value("Doctor with id 3 is not active"));
     }
 
     @Test

@@ -54,6 +54,8 @@ public class DoctorService {
     @Transactional
     public void delete(Long id) {
         doctorRepository.delete(getDoctor(id));
+        // Flush so a foreign-key violation (doctor has appointments) surfaces here as a 409.
+        doctorRepository.flush();
     }
 
     private Doctor getDoctor(Long id) {
